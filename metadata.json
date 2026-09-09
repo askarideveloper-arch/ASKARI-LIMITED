@@ -1,0 +1,6 @@
+{
+  "name": "ASKARI LIMITED",
+  "description": "Premium online shopping store serving customers across Pakistan with cash on delivery, fast shipping, and private admin management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
