@@ -19,7 +19,7 @@ import {
   initialReviews,
   initialSettings,
 } from '../data/initialData';
-
+import { supabase } from '../supabase';
 export type CurrentView =
   | 'home'
   | 'shop'
@@ -455,23 +455,67 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const isWishlisted = (productId: string) => wishlist.includes(productId);
 
   // Submit Order
-  const createOrder = async (orderData: {
-    customer: Order['customer'];
-    paymentMethod: PaymentMethod;
-    transactionId?: string;
-  }) => {
-    const items = cart.map((item) => ({
-      productId: item.product.id,
-      productName: item.product.name,
-      productImage: item.product.images[0] || '',
-      selectedSize: item.selectedSize,
-      selectedColor: item.selectedColor,
+const createOrder = async (orderData: {
+  customer: Order['customer'];
+  paymentMethod: PaymentMethod;
+  transactionId?: string;
+}) => {
+  const items = cart.map((item) => ({
+    productId: item.product.id,
+    productName: item.product.name,
+    productImage: item.product.images[0] || '',
+    selectedSize: item.selectedSize,
+    selectedColor: item.selectedColor,
+    quantity: item.quantity,
+    unitPrice: item.product.salePrice,
+    totalPrice: item.product.salePrice * item.quantity,
+  }));
+
+  try {
+    // Save main order to Supabase
+    const { data: order, error: orderError } = await supabase
+      .from('orders')
+      .insert({
+        customer_name: orderData.customer.fullName,
+        phone: orderData.customer.phoneNumber,
+        address: `${orderData.customer.address}, ${orderData.customer.city}, ${orderData.customer.province}`,
+        total: cartTotal,
+        status: 'Pending',
+      })
+      .select()
+      .single();
+
+    if (orderError) {
+      console.error('Order error:', orderError);
+      return {
+        success: false,
+        error: orderError.message,
+      };
+    }
+
+    // Save order items
+    const orderItems = items.map((item) => ({
+      order_id: order.id,
+      product_id: Number(item.productId) || null,
       quantity: item.quantity,
-      unitPrice: item.product.salePrice,
-      totalPrice: item.product.salePrice * item.quantity,
+      price: item.unitPrice,
     }));
 
-    const payload = {
+    const { error: itemsError } = await supabase
+      .from('order_items')
+      .insert(orderItems);
+
+    if (itemsError) {
+      console.error('Order items error:', itemsError);
+      return {
+        success: false,
+        error: itemsError.message,
+      };
+    }
+
+    // Create order for website
+    const createdOrder: Order = {
+      id: `ASK-${order.id}`,
       customer: orderData.customer,
       items,
       subtotal: cartSubtotal,
@@ -479,49 +523,35 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       shippingFee,
       totalAmount: cartTotal,
       paymentMethod: orderData.paymentMethod,
+      paymentStatus:
+        orderData.paymentMethod === 'Cash on Delivery'
+          ? 'Unpaid'
+          : 'Pending Verification',
       transactionId: orderData.transactionId,
+      orderStatus: 'Pending',
+      createdAt: order.created_at,
+      updatedAt: order.created_at,
     };
 
-    try {
-      const res = await fetch('/api/orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const createdOrder: Order = await res.json();
-      if (res.ok) {
-        setPlacedOrder(createdOrder);
-        setOrders((prev) => [createdOrder, ...prev]);
-        clearCart();
-        setCurrentView('order-confirmation');
-        return { success: true, order: createdOrder };
-      } else {
-        return { success: false, error: (createdOrder as any).error || 'Failed to place order' };
-      }
-    } catch {
-      // Offline fallback
-      const offlineOrder: Order = {
-        id: 'ASK-' + Math.floor(10000 + Math.random() * 90000),
-        customer: orderData.customer,
-        items,
-        subtotal: cartSubtotal,
-        discount: discountAmount,
-        shippingFee,
-        totalAmount: cartTotal,
-        paymentMethod: orderData.paymentMethod,
-        paymentStatus: orderData.paymentMethod === 'Cash on Delivery' ? 'Unpaid' : 'Paid',
-        transactionId: orderData.transactionId,
-        orderStatus: 'Pending',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-      setPlacedOrder(offlineOrder);
-      setOrders((prev) => [offlineOrder, ...prev]);
-      clearCart();
-      setCurrentView('order-confirmation');
-      return { success: true, order: offlineOrder };
-    }
-  };
+    setPlacedOrder(createdOrder);
+    setOrders((prev) => [createdOrder, ...prev]);
+
+    clearCart();
+    setCurrentView('order-confirmation');
+
+    return {
+      success: true,
+      order: createdOrder,
+    };
+  } catch (error: any) {
+    console.error('Create order error:', error);
+
+    return {
+      success: false,
+      error: error?.message || 'Failed to place order',
+    };
+  }
+};
 
   // Submit Review
   const submitReview = async (reviewData: {
